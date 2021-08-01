@@ -135,6 +135,12 @@ parser.add_argument(
     help="List of subreddits to fetch data for; can also be a YAML file",
 )
 parser.add_argument(
+    "-l",
+    "--log",
+    type=str,
+    help="File to put logs out to",
+)
+parser.add_argument(
     "-d", "--debug", help="Output a metric shitton of runtime data", action="store_true"
 )
 parser.add_argument(
@@ -153,7 +159,16 @@ elif args.verbose:
 else:
     log_level = logging.WARNING
 
-logging.basicConfig(format="%(asctime)s %(levelname)-8s %(message)s", level=log_level)
+if args.log:
+    logging.basicConfig(
+        filename=args.log,
+        format="%(asctime)s %(levelname)-8s %(message)s",
+        level=log_level,
+    )
+else:
+    logging.basicConfig(
+        format="%(asctime)s %(levelname)-8s %(message)s", level=log_level
+    )
 logger = logging.getLogger()
 
 session = boto3.session.Session()
