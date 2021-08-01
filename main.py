@@ -20,7 +20,7 @@ def pull_subreddit(subreddit, item_type):
         new_url = pushshift_query_url.format(item_type, subreddit) + str(previous_epoch)
 
         try:
-            fetched_data = requests.get(new_url, headers=pushshift_query_headers)
+            fetched_data = requests.get(new_url, headers=pushshift_query_headers, timeout=12)
         except Exception as e:
             additional_backoff = additional_backoff * 2
             logger.info(f"pushshift-to-s3: Backing off due to api error: {e}")
@@ -89,11 +89,13 @@ def pull_subreddit(subreddit, item_type):
             f"pushshift-to-s3: Archived {item_count} {item_type}s through {tempstamp}"
         )
 
-        if args.cron and start_epoch - previous_epoch > 345600:
-            logger.info(
-                f"pushshift-to-s3: Stopping pull for {subreddit} due to update flag"
-            )
-            break
+        if args.update:
+            update_limit_in_seconds = args.update * 60 * 60 * 24
+            if start_epoch - previous_epoch > update_limit_in_seconds:
+                logger.info(
+                    f"pushshift-to-s3: Stopping pull for {subreddit} due to update flag"
+                )
+                break
 
 
 def s3_upload(packed_item):
@@ -115,10 +117,10 @@ parser = argparse.ArgumentParser(
     )
 )
 parser.add_argument(
-    "-c",
-    "--cron",
-    help="Fetches ~4d of posts, not everything",
-    action="store_true",
+    "-u",
+    "--update",
+    type=int,
+    help="How many days in the past we should fetch data for"
 )
 parser.add_argument(
     "-t",
