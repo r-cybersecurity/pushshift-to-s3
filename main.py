@@ -20,7 +20,9 @@ def pull_subreddit(subreddit, item_type):
         new_url = pushshift_query_url.format(item_type, subreddit) + str(previous_epoch)
 
         try:
-            fetched_data = requests.get(new_url, headers=pushshift_query_headers, timeout=12)
+            fetched_data = requests.get(
+                new_url, headers=pushshift_query_headers, timeout=8
+            )
         except Exception as e:
             additional_backoff = additional_backoff * 2
             logger.info(f"pushshift-to-s3: Backing off due to api error: {e}")
@@ -120,7 +122,7 @@ parser.add_argument(
     "-u",
     "--update",
     type=int,
-    help="How many days in the past we should fetch data for"
+    help="How many days in the past we should fetch data for",
 )
 parser.add_argument(
     "-t",
