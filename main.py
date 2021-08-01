@@ -12,6 +12,7 @@ def pull_subreddit(subreddit, item_type):
     start_epoch = int(datetime.utcnow().timestamp())
     previous_epoch = start_epoch
     item_count = 0
+    pool = ThreadPool(processes=s3_put_processes)
 
     logger.info(f"pushshift-to-s3: Ingesting {item_type}s from {subreddit}")
 
@@ -82,7 +83,6 @@ def pull_subreddit(subreddit, item_type):
             f"pushshift-to-s3: Retrieved {item_count} {item_type}s through {tempstamp}"
         )
 
-        pool = ThreadPool(processes=s3_put_processes)
         pool.map(s3_upload, clean_items)
 
         logger.info(
