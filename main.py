@@ -104,7 +104,7 @@ def s3_upload(packed_item):
     item = packed_item[0]
     item_type = packed_item[1]
 
-    key = f"{subreddit}/{item_type}/{item['id']}"
+    key = f"{subreddit}/{item_type}/{item['id']}.zz"
     body = zlib.compress(str.encode(json.dumps(item)), level=9)
 
     logger.debug(f"pushshift-to-s3: Attempting to save {key}")
