@@ -5,30 +5,33 @@ from multiprocessing.pool import ThreadPool
 from config import *
 
 
-def pull_subreddit(subreddit, item_type):
+def pull_subreddit(packed_item):
+    subreddit = packed_item[0]
+    item_type = packed_item[1]
+
     item_count = 0
     retry_count = 0
     additional_backoff = 1
     start_epoch = int(datetime.utcnow().timestamp())
     previous_epoch = start_epoch
     item_count = 0
-    pool = ThreadPool(processes=s3_put_processes)
+    s3_pool = ThreadPool(processes=pool_s3_threads_per_subreddit)
 
-    logger.info(f"pushshift-to-s3: Ingesting {item_type}s from {subreddit}")
+    logger.info(f"{subreddit}: Ingesting {item_type}s")
 
     while True:
         new_url = pushshift_query_url.format(item_type, subreddit) + str(previous_epoch)
 
         try:
             fetched_data = requests.get(
-                new_url, headers=pushshift_query_headers, timeout=8
+                new_url, headers=pushshift_query_headers, timeout=pushshift_timeout
             )
         except Exception as e:
             additional_backoff = additional_backoff * 2
-            logger.info(f"pushshift-to-s3: Backing off due to api error: {e}")
+            logger.info(f"{subreddit}: Backing off due to api error: {e}")
             retry_count = retry_count + 1
             time.sleep(additional_backoff)
-            if retry_count >= 13:
+            if retry_count >= pushshift_retries:
                 break
             continue
 
@@ -36,19 +39,19 @@ def pull_subreddit(subreddit, item_type):
             json_data = fetched_data.json()
         except Exception as e:
             additional_backoff = additional_backoff * 2
-            logger.info(f"pushshift-to-s3: Backing off due to json error: {e}")
+            logger.info(f"{subreddit}: Backing off due to json error: {e}")
             retry_count = retry_count + 1
             time.sleep(additional_backoff)
-            if retry_count >= 13:
+            if retry_count >= pushshift_retries:
                 break
             continue
 
         if "data" not in json_data:
             additional_backoff = additional_backoff * 2
-            logger.info(f"pushshift-to-s3: Backing off due to data error: no data")
+            logger.info(f"{subreddit}: Backing off due to data error: no data")
             retry_count = retry_count + 1
             time.sleep(additional_backoff)
-            if retry_count >= 13:
+            if retry_count >= pushshift_retries:
                 break
             continue
 
@@ -58,7 +61,7 @@ def pull_subreddit(subreddit, item_type):
 
         if len(items) == 0:
             logger.info(
-                f"pushshift-to-s3: Pushshift API returned no more {item_type}s for {subreddit}"
+                f"{subreddit}: Pushshift API returned no more {item_type}s for {subreddit}"
             )
             break
 
@@ -66,50 +69,49 @@ def pull_subreddit(subreddit, item_type):
 
         for item in items:
             if not "id" in item.keys():
-                logger.critical(
-                    f"pushshift-to-s3: No 'id' in result, cannot create key"
-                )
+                logger.critical(f"{subreddit}: No 'id' in result, cannot create key")
             else:
                 if not "created_utc" in item.keys():
                     logger.warning(
-                        f"pushshift-to-s3: No 'created_utc' in result {item['id']}, may cause loop"
+                        f"{subreddit}: No 'created_utc' in result {item['id']}, may cause loop"
                     )
                 else:
                     previous_epoch = item["created_utc"] - 1
 
                 item_count += 1
-                clean_items.append([item, item_type])
+                clean_items.append([subreddit, item_type, item])
 
         tempstamp = datetime.fromtimestamp(previous_epoch).strftime("%Y-%m-%d")
         logger.info(
-            f"pushshift-to-s3: Retrieved {item_count} {item_type}s through {tempstamp}"
+            f"{subreddit}: Retrieved {item_count} {item_type}s through {tempstamp}"
         )
 
-        pool.map(s3_upload, clean_items)
+        s3_pool.map(s3_upload, clean_items)
 
         logger.info(
-            f"pushshift-to-s3: Archived {item_count} {item_type}s through {tempstamp}"
+            f"{subreddit}: Archived {item_count} {item_type}s through {tempstamp}"
         )
 
         if args.update:
             update_limit_in_seconds = args.update * 60 * 60 * 24
             if start_epoch - previous_epoch > update_limit_in_seconds:
                 logger.info(
-                    f"pushshift-to-s3: Stopping pull for {subreddit} due to update flag"
+                    f"{subreddit}: Stopping pull for {subreddit} due to update flag"
                 )
                 break
 
 
 def s3_upload(packed_item):
-    item = packed_item[0]
+    subreddit = packed_item[0]
     item_type = packed_item[1]
+    item = packed_item[2]
 
     key = f"{subreddit}/{item_type}/{item['id']}.zz"
     body = zlib.compress(str.encode(json.dumps(item)), level=9)
 
-    logger.debug(f"pushshift-to-s3: Attempting to save {key}")
+    logger.debug(f"Attempting to save {key}")
     client.put_object(Bucket=s3_bucket_name, Key=key, Body=body)
-    logger.debug(f"pushshift-to-s3: Saved {key} successfully")
+    logger.debug(f"Saved {key} successfully")
 
 
 parser = argparse.ArgumentParser(
@@ -201,6 +203,10 @@ if args.type == "both":
 else:
     types_to_fetch.append(args.type)
 
+packed_items = []
 for type_to_fetch in types_to_fetch:
     for subreddit in subreddits:
-        pull_subreddit(subreddit, type_to_fetch)
+        packed_items.append([subreddit, type_to_fetch])
+
+subreddit_pool = ThreadPool(processes=pool_subreddits)
+subreddit_pool.map(pull_subreddit, packed_items)
